@@ -1,0 +1,4 @@
+-Wall
+-std=gnu17
+-Wextra
+-DDEBUG
