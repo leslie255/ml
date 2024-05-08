@@ -4,6 +4,11 @@
 
 DECL_DA_STRUCT(f32, DynArrayF32);
 
+typedef struct SliceF32 {
+  f32 *values;
+  usize len;
+} SliceF32;
+
 f32 randf_0to1() {
   return (f32)rand() / (f32)RAND_MAX;
 }
@@ -26,6 +31,14 @@ typedef struct Mat {
   usize cols;
   usize rows;
 } Mat;
+
+/// Perform sigmoid on every element of a matrix.
+void sigmoid_mat(Mat m) {
+  for (usize i = 0; i < m.rows * m.cols; ++i) {
+    f32 *x = &m.values[i];
+    *x = sigmoidf(*x);
+  }
+}
 
 DECL_DA_STRUCT(Mat, DynArrayMat);
 
@@ -108,8 +121,8 @@ NN nn_new(usize *layers, usize layers_count) {
     usize idx = pool.da_len;
     da_append_zeros(&pool, prev_layer * layer + layer + layer);
     da_push(&ws, ((Mat){
-                     .cols = layer,
-                     .rows = prev_layer,
+                     .cols = prev_layer,
+                     .rows = layer,
                      .values = da_get(&pool, idx),
                  }));
     idx += prev_layer * layer;
@@ -138,20 +151,23 @@ usize nn_layer_count(NN nn) {
   return nn.as.da_len;
 }
 
-Mat nn_forward(NN nn, Mat in) {
+SliceF32 nn_forward(NN nn, SliceF32 input) {
+  Mat a0 = {
+      .cols = 1,
+      .rows = input.len,
+      .values = input.values,
+  };
   for (usize l = 0; l < nn_layer_count(nn); ++l) {
-    Mat al_ = l == 0 ? in : *da_get(&nn.as, l - 1); // previous layer
-    Mat al = *da_get(&nn.as, l);
-    Mat wl = *da_get(&nn.ws, l);
-    Mat bl = *da_get(&nn.bs, l);
-    mat_mul(al, al_, wl);
-    mat_add(al, bl);
-    for (usize i = 0; i < al.rows * al.cols; ++i) {
-      f32 *x = &al.values[i];
-      *x = sigmoidf(*x);
-    }
+    Mat a_ = l == 0 ? a0 : *da_get(&nn.as, l - 1); // a previous layer
+    Mat a = *da_get(&nn.as, l);
+    Mat w = *da_get(&nn.ws, l);
+    Mat b = *da_get(&nn.bs, l);
+    mat_mul(a, w, a_);
+    mat_add(a, b);
+    sigmoid_mat(a);
   }
-  return *da_get(&nn.as, nn.as.da_len - 1);
+  Mat out = *da_get(&nn.as, nn.as.da_len - 1);
+  return (SliceF32){out.values, out.cols};
 }
 
 void nn_free(NN nn) {
@@ -219,9 +235,15 @@ f32 training_data[] = {
 };
 
 int main() {
-  usize layers[] = {2, 1};
+  usize layers[] = {2, 3, 2};
   NN nn = nn_new(layers, ARR_LEN(layers));
 
+  // Manually setting the weights and biases so it forms a NAND gate.
+  // da_get(&nn.ws, 0)->values[0] = -667;
+  // da_get(&nn.ws, 0)->values[1] = -667;
+  // da_get(&nn.bs, 0)->values[0] = 1000;
+
+  // Print matrices in the network.
   for (usize i = 0; i < ARR_LEN(layers) - 1; ++i) {
     DBG_PRINTLN(i);
     DBG_PRINTF("ws = \n");
@@ -232,18 +254,10 @@ int main() {
     mat_println(*da_get(&nn.as, i));
   }
 
-  da_get(&nn.ws, 0)->values[0] = -MAXFLOAT / 3 * 2;
-  da_get(&nn.ws, 0)->values[1] = -MAXFLOAT / 3 * 2;
-  da_get(&nn.bs, 0)->values[0] = MAXFLOAT;
-
   for (usize i = 0; i < ARR_LEN(training_data); i += 3) {
-    Mat in = {
-        .cols = 2,
-        .rows = 1,
-        .values = &training_data[i],
-    };
-    Mat out = nn_forward(nn, in);
-    printf("%.0f, %.0f => %.04f ~ %.0f\n", in.values[0], in.values[1], out.values[0], roundf(out.values[0]));
+    SliceF32 out = nn_forward(nn, (SliceF32){&training_data[i], 2});
+    printf("%.0f, %.0f => %.04f ~ %.0f\n", training_data[i], training_data[i + 1], out.values[0],
+           roundf(out.values[0]));
   }
 
   nn_free(nn);
@@ -268,5 +282,5 @@ int main() {
   //   printf("%.0f, %.0f => %.04f ~ %.0f\n", x1, x2, out, roundf(out));
   // }
 
-  return 0;
+  // return 0;
 }
