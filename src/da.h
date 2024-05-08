@@ -45,6 +45,25 @@
     memcpy(&DA_->da_items[I_], (ITEMS), sizeof(DA_->da_items[0]) * N_);                                                \
   } while (0)
 
+#define da_append_zeros(DA, N)                                                                                         \
+  do {                                                                                                                 \
+    __auto_type DA_ = (DA);                                                                                            \
+    size_t N_ = (N);                                                                                                   \
+    size_t I_ = DA_->da_len;                                                                                           \
+    DA_->da_len += N_;                                                                                                 \
+    if (DA_->da_items == NULL) {                                                                                       \
+      DA_->da_cap = DA_INIT_CAP > N_ ? DA_INIT_CAP : N_;                                                               \
+      DA_->da_items = malloc(sizeof(DA_->da_items[0]) * DA_->da_cap);                                                  \
+      assert(DA_->da_items != NULL);                                                                                   \
+    } else if (DA_->da_len > DA_->da_cap) {                                                                            \
+      DA_->da_cap *= 2;                                                                                                \
+      DA_->da_cap = DA_->da_cap > DA_->da_len ? DA_->da_cap : DA_->da_len;                                             \
+      DA_->da_items = realloc(DA_->da_items, sizeof(DA_->da_items[0]) * DA_->da_cap);                                  \
+      assert(DA_->da_items != NULL);                                                                                   \
+    }                                                                                                                  \
+    memset(&DA_->da_items[I_], 0, sizeof(DA_->da_items[0]) * N_);                                                      \
+  } while (0)
+
 #define da_append_multiple(DA, ...)                                                                                    \
   do {                                                                                                                 \
     __auto_type DA__ = (DA);                                                                                           \
@@ -52,16 +71,33 @@
     da_append(DA__, items, sizeof(items) / sizeof(items[0]));                                                          \
   } while (0)
 
+#define da_reserve_exact(DA, N)                                                                                        \
+  do {                                                                                                                 \
+    __auto_type DA_ = (DA);                                                                                            \
+    size_t N_ = (N);                                                                                                   \
+    if (DA_->da_items == NULL) {                                                                                       \
+      DA_->da_cap = N_;                                                                                                \
+      DA_->da_items = malloc(sizeof(DA_->da_items[0]) * DA_->da_cap);                                                  \
+      assert(DA_->da_items != NULL);                                                                                   \
+    } else if (DA_->da_len + N_ > DA_->da_cap) {                                                                       \
+      DA_->da_cap = DA_->da_len + N_;                                                                                  \
+      DA_->da_items = realloc(DA_->da_items, sizeof(DA_->da_items[0]) * DA_->da_cap);                                  \
+      assert(DA_->da_items != NULL);                                                                                   \
+    }                                                                                                                  \
+  } while (0)
+
 #define da_reserve(DA, N)                                                                                              \
   do {                                                                                                                 \
     __auto_type DA_ = (DA);                                                                                            \
-    size_t n = (N);                                                                                                    \
+    size_t N_ = (N);                                                                                                   \
+    size_t NEW_LEN = DA_->da_len + N;                                                                                  \
     if (DA_->da_items == NULL) {                                                                                       \
-      DA_->da_cap = n;                                                                                                 \
+      DA_->da_cap = DA_INIT_CAP > N_ ? DA_INIT_CAP : N_;                                                               \
       DA_->da_items = malloc(sizeof(DA_->da_items[0]) * DA_->da_cap);                                                  \
       assert(DA_->da_items != NULL);                                                                                   \
-    } else if (DA_->da_len + n > DA_->da_cap) {                                                                        \
-      DA_->da_cap = DA_->da_len + n;                                                                                   \
+    } else if (NEW_LEN > DA_->da_cap) {                                                                                \
+      DA_->da_cap *= 2;                                                                                                \
+      DA_->da_cap = DA_->da_cap > NEW_LEN ? DA_->da_cap : NEW_LEN;                                                     \
       DA_->da_items = realloc(DA_->da_items, sizeof(DA_->da_items[0]) * DA_->da_cap);                                  \
       assert(DA_->da_items != NULL);                                                                                   \
     }                                                                                                                  \
@@ -117,4 +153,3 @@
 #define da_get(ARR, IDX) (&(ARR)->da_items[(IDX)])
 
 #define da_get_checked(ARR, IDX) (assert((IDX) < (ARR)->da_len), &(ARR)->da_items[(IDX)])
-

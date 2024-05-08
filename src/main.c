@@ -80,27 +80,60 @@ void mat_rand(Mat m, f32 floor, f32 ceil) {
 }
 
 typedef struct NN {
+  /// A pool of floats.
   DynArrayF32 pool;
   DynArrayMat ws;
   DynArrayMat bs;
   DynArrayMat as;
 } NN;
 
+/// The first layer is the number of inputs.
 NN nn_new(usize *layers, usize layers_count) {
   (void)layers;
   DynArrayMat ws = {0};
   DynArrayMat bs = {0};
   DynArrayMat as = {0};
-  da_reserve(&ws, layers_count);
-  da_reserve(&bs, layers_count);
-  da_reserve(&as, layers_count);
-  for (usize i = 0; i < layers_count; ++i) {
+  DynArrayF32 pool = {0};
+  da_reserve_exact(&ws, layers_count - 1);
+  da_reserve_exact(&bs, layers_count - 1);
+  da_reserve_exact(&as, layers_count - 1);
+  for (usize i = 1; i < layers_count; ++i) {
+    usize layer = layers[i];
+    usize prev_layer = layers[i - 1];
+    usize idx = pool.da_len;
+    da_append_zeros(&pool, prev_layer * layer + layer + layer);
+    da_push(&ws, ((Mat){
+                     .cols = prev_layer,
+                     .rows = layer,
+                     .values = &pool.da_items[idx],
+                 }));
+    idx += prev_layer * layer;
+    da_push(&bs, ((Mat){
+                     .cols = 1,
+                     .rows = layer,
+                     .values = &pool.da_items[idx],
+                 }));
+    idx += layer;
+    da_push(&as, ((Mat){
+                     .cols = 1,
+                     .rows = layer,
+                     .values = &pool.da_items[idx],
+                 }));
+    idx += layer;
   }
-  TODO_FUNCTION();
+  return (NN){
+      .pool = pool,
+      .ws = ws,
+      .bs = bs,
+      .as = as,
+  };
 }
 
 void nn_free(NN nn) {
   da_free(nn.pool);
+  da_free(nn.ws);
+  da_free(nn.bs);
+  da_free(nn.as);
 }
 
 typedef struct NN_ {
@@ -165,41 +198,15 @@ const f32 training_data[] = {
 };
 
 int main() {
-  srand(255);
-  f32 values1[12] = {
-      2, 3,  4,  5,   //
-      1, 10, 89, 20,  //
-      6, 7,  11, 123, //
-  };
-  Mat m1 = {
-      .cols = 4,
-      .rows = 3,
-      .values = values1,
-  };
-  DBG_PRINTF("m1 =\n");
-  mat_println(m1);
-  f32 values2[12] = {
-      1, 2, 2, //
-      1, 3, 1, //
-      2, 2, 1, //
-      1, 1, 2, //
-  };
-  Mat m2 = {
-      .cols = 3,
-      .rows = 4,
-      .values = values2,
-  };
-  DBG_PRINTF("m2 =\n");
-  mat_println(m2);
-  f32 values3[9] = {0};
-  Mat m3 = {
-      .cols = 3,
-      .rows = 3,
-      .values = values3,
-  };
-  mat_mul(m3, m1, m2);
-  DBG_PRINTF("m1 * m2 =\n");
-  mat_println(m3);
+  usize layers[] = {2, 3, 2, 1};
+  NN nn = nn_new(layers, ARR_LEN(layers));
+  for (usize i = 0; i < ARR_LEN(layers) - 1; ++i) {
+    DBG_PRINTLN(i);
+    DBG_PRINTF("ws = \n");mat_println(nn.ws.da_items[i]);
+    DBG_PRINTF("bs = \n");mat_println(nn.bs.da_items[i]);
+    DBG_PRINTF("as = \n");mat_println(nn.as.da_items[i]);
+  }
+  nn_free(nn);
 
   // srand(time(NULL));
   // NN_ nn = neuron_random(-1, 1);
