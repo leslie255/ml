@@ -14,6 +14,10 @@ f32 randf_in(f32 floor, f32 ceil) {
   return floor + (ceil - floor) * randf_0to1();
 }
 
+f32 sigmoidf(f32 x) {
+  return 1 / (1 + expf(-x));
+}
+
 /// Tensor is a cringe name,
 /// I'm gonna call it Mat, short for Mattress.
 /// Does not own the data.
@@ -88,8 +92,9 @@ typedef struct NN {
 } NN;
 
 /// The first layer is the number of inputs.
+/// Must have at least 2 layers (0th layer for input and 1 layer of neurons).
 NN nn_new(usize *layers, usize layers_count) {
-  (void)layers;
+  ASSERT(layers_count > 1);
   DynArrayMat ws = {0};
   DynArrayMat bs = {0};
   DynArrayMat as = {0};
@@ -103,23 +108,22 @@ NN nn_new(usize *layers, usize layers_count) {
     usize idx = pool.da_len;
     da_append_zeros(&pool, prev_layer * layer + layer + layer);
     da_push(&ws, ((Mat){
-                     .cols = prev_layer,
-                     .rows = layer,
-                     .values = &pool.da_items[idx],
+                     .cols = layer,
+                     .rows = prev_layer,
+                     .values = da_get(&pool, idx),
                  }));
     idx += prev_layer * layer;
     da_push(&bs, ((Mat){
                      .cols = 1,
                      .rows = layer,
-                     .values = &pool.da_items[idx],
+                     .values = da_get(&pool, idx),
                  }));
     idx += layer;
     da_push(&as, ((Mat){
                      .cols = 1,
                      .rows = layer,
-                     .values = &pool.da_items[idx],
+                     .values = da_get(&pool, idx),
                  }));
-    idx += layer;
   }
   return (NN){
       .pool = pool,
@@ -127,6 +131,29 @@ NN nn_new(usize *layers, usize layers_count) {
       .bs = bs,
       .as = as,
   };
+}
+
+/// Not including input layer.
+usize nn_layer_count(NN nn) {
+  return nn.as.da_len;
+}
+
+Mat nn_forward(NN nn, Mat in) {
+  // Second layers onwards.
+  for (usize l = 0; l < nn_layer_count(nn); ++l) {
+    // previous layer of activation.
+    Mat al_ = l == 0 ? in : *da_get(&nn.as, l - 1);
+    Mat al = *da_get(&nn.as, l);
+    Mat wl = *da_get(&nn.ws, l);
+    Mat bl = *da_get(&nn.bs, l);
+    mat_mul(al, al_, wl);
+    mat_add(al, bl);
+    for (usize i = 0; i < al.rows * al.cols; ++i) {
+      f32 *x = &al.values[i];
+      *x = sigmoidf(*x);
+    }
+  }
+  return *da_get(&nn.as, nn.as.da_len - 1);
 }
 
 void nn_free(NN nn) {
@@ -141,10 +168,6 @@ typedef struct NN_ {
   f32 w2;
   f32 bias;
 } NN_;
-
-f32 sigmoidf(f32 x) {
-  return 1 / (1 + expf(-x));
-}
 
 f32 forward(NN_ nn, f32 x1, f32 x2) {
   return sigmoidf(nn.w1 * x1 + nn.w2 * x2 + nn.bias);
@@ -190,7 +213,7 @@ NN_ neuron_random(f32 floor, f32 ceil) {
 }
 
 // AND gate.
-const f32 training_data[] = {
+f32 training_data[] = {
     0, 0, 1, //
     1, 0, 1, //
     0, 1, 1, //
@@ -198,14 +221,33 @@ const f32 training_data[] = {
 };
 
 int main() {
-  usize layers[] = {2, 3, 2, 1};
+  usize layers[] = {2, 1};
   NN nn = nn_new(layers, ARR_LEN(layers));
+
   for (usize i = 0; i < ARR_LEN(layers) - 1; ++i) {
     DBG_PRINTLN(i);
-    DBG_PRINTF("ws = \n");mat_println(nn.ws.da_items[i]);
-    DBG_PRINTF("bs = \n");mat_println(nn.bs.da_items[i]);
-    DBG_PRINTF("as = \n");mat_println(nn.as.da_items[i]);
+    DBG_PRINTF("ws = \n");
+    mat_println(*da_get(&nn.ws, i));
+    DBG_PRINTF("bs = \n");
+    mat_println(*da_get(&nn.bs, i));
+    DBG_PRINTF("as = \n");
+    mat_println(*da_get(&nn.as, i));
   }
+
+  da_get(&nn.ws, 0)->values[0] = -MAXFLOAT / 3 * 2;
+  da_get(&nn.ws, 0)->values[1] = -MAXFLOAT / 3 * 2;
+  da_get(&nn.bs, 0)->values[0] = MAXFLOAT;
+
+  for (usize i = 0; i < ARR_LEN(training_data); i += 3) {
+    Mat in = {
+      .cols = 2,
+      .rows = 1,
+      .values = &training_data[i],
+    };
+    Mat out = nn_forward(nn, in);
+    printf("%.0f, %.0f => %.04f ~ %.0f\n", in.values[0], in.values[1], out.values[0], roundf(out.values[0]));
+  }
+
   nn_free(nn);
 
   // srand(time(NULL));
@@ -227,5 +269,6 @@ int main() {
   //   f32 out = forward(nn, x1, x2);
   //   printf("%.0f, %.0f => %.04f ~ %.0f\n", x1, x2, out, roundf(out));
   // }
+
   return 0;
 }

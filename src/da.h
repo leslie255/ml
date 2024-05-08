@@ -151,5 +151,3 @@
   } while (0);
 
 #define da_get(ARR, IDX) (&(ARR)->da_items[(IDX)])
-
-#define da_get_checked(ARR, IDX) (assert((IDX) < (ARR)->da_len), &(ARR)->da_items[(IDX)])
