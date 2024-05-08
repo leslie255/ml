@@ -24,6 +24,9 @@ typedef float f32;
 typedef double f64;
 typedef size_t usize;
 typedef ssize_t isize;
+typedef u8 char8;
+typedef u16 char16;
+typedef u32 char32;
 
 #define REF_RVALUE(X) ((typeof(X) *)&(struct { typeof(X) _; }){X})
 

@@ -8,8 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-void yeb_bootstrap();
-
 #define DA_INIT_CAP 256
 
 #define da_push(DA, ITEM)                                                                                              \
@@ -120,4 +118,3 @@ void yeb_bootstrap();
 
 #define da_get_checked(ARR, IDX) (assert((IDX) < (ARR)->da_len), &(ARR)->da_items[(IDX)])
 
-DECL_DA_STRUCT(const char *, ConstStrings);

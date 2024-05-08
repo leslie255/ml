@@ -1,11 +1,17 @@
 #include "yeb.h"
 
+bool is_release = false;
+
 void cc(Cmd *cmd) {
   CMD_APPEND(cmd, "clang");
 }
 
 void cflags(Cmd *cmd) {
-  CMD_APPEND(cmd, "-Wall -Wextra --std=gnu17 -O2");
+  CMD_APPEND(cmd, "-Wall -Wextra --std=gnu17");
+  if (is_release)
+    CMD_APPEND(cmd, "-O2");
+  else
+    CMD_APPEND(cmd, "-g -O1 -DDEBUG");
 }
 
 Cmd mkdir_bin() {
@@ -31,8 +37,10 @@ Cmd link() {
   return cmd;
 }
 
-int main() {
+int main(int argc, char **argv) {
   yeb_bootstrap();
+  Options opts = parse_argv(argc, argv);
+  is_release = opts_get(opts, "--release").exists;
   execute(mkdir_bin());
   execute(build_main());
   execute(link());
