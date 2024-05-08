@@ -139,10 +139,8 @@ usize nn_layer_count(NN nn) {
 }
 
 Mat nn_forward(NN nn, Mat in) {
-  // Second layers onwards.
   for (usize l = 0; l < nn_layer_count(nn); ++l) {
-    // previous layer of activation.
-    Mat al_ = l == 0 ? in : *da_get(&nn.as, l - 1);
+    Mat al_ = l == 0 ? in : *da_get(&nn.as, l - 1); // previous layer
     Mat al = *da_get(&nn.as, l);
     Mat wl = *da_get(&nn.ws, l);
     Mat bl = *da_get(&nn.bs, l);
@@ -240,9 +238,9 @@ int main() {
 
   for (usize i = 0; i < ARR_LEN(training_data); i += 3) {
     Mat in = {
-      .cols = 2,
-      .rows = 1,
-      .values = &training_data[i],
+        .cols = 2,
+        .rows = 1,
+        .values = &training_data[i],
     };
     Mat out = nn_forward(nn, in);
     printf("%.0f, %.0f => %.04f ~ %.0f\n", in.values[0], in.values[1], out.values[0], roundf(out.values[0]));
