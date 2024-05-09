@@ -146,6 +146,13 @@ NN nn_new(usize *layers, usize layers_count) {
   };
 }
 
+void nn_free(NN nn) {
+  da_free(nn.pool);
+  da_free(nn.ws);
+  da_free(nn.bs);
+  da_free(nn.as);
+}
+
 /// Not including input layer.
 usize nn_layer_count(NN nn) {
   return nn.as.da_len;
@@ -170,40 +177,26 @@ SliceF32 nn_forward(NN nn, SliceF32 input) {
   return (SliceF32){out.values, out.cols};
 }
 
-void nn_free(NN nn) {
-  da_free(nn.pool);
-  da_free(nn.ws);
-  da_free(nn.bs);
-  da_free(nn.as);
-}
-
-typedef struct NN_ {
-  f32 w1;
-  f32 w2;
-  f32 bias;
-} NN_;
-
-f32 forward(NN_ nn, f32 x1, f32 x2) {
-  return sigmoidf(nn.w1 * x1 + nn.w2 * x2 + nn.bias);
-}
-
-/// `training_input_size` is number of floats, not number of input-outputs.
-/// Returns the loss.
-f32 train(NN_ *nn, const f32 *training_input, usize training_input_size, usize i, f32 rate) {
+f32 nn_train(NN *nn, f32 *training_input, usize training_input_size, f32 rate, usize i) {
+  if (nn->as.da_len != 1)
+    TODO();
+  if (da_get(&nn->as, 0)->rows != 1)
+    TODO();
+  if (da_get(&nn->ws, 0)->cols != 2)
+    TODO();
   assert(training_input_size % 2 == 0);
   f32 loss = 0;
   f32 dw1 = 0;
   f32 dw2 = 0;
   f32 db = 0;
   for (usize i = 0; i < training_input_size; i += 3) {
-    const f32 x1 = training_input[i];
-    const f32 x2 = training_input[i + 1];
+    f32 *in = &training_input[i];
     const f32 y = training_input[i + 2];
-    f32 nn_out = forward(*nn, x1, x2);
+    f32 nn_out = nn_forward(*nn, (SliceF32){in, 2}).values[0];
     f32 diff = nn_out - y;
     loss += diff * diff;
-    dw1 += diff * nn_out * (1 - nn_out) * x1;
-    dw2 += diff * nn_out * (1 - nn_out) * x2;
+    dw1 += diff * nn_out * (1 - nn_out) * in[0];
+    dw2 += diff * nn_out * (1 - nn_out) * in[1];
     db += diff * nn_out * (1 - nn_out);
   }
   usize n = training_input_size / 3;
@@ -213,17 +206,10 @@ f32 train(NN_ *nn, const f32 *training_input, usize training_input_size, usize i
   db = db / n * 2;
   if ((i % 1000) == 0)
     printf("%zu\tloss: %.08f\n", i, loss);
-  nn->bias -= db * rate;
-  nn->w1 -= dw1 * rate;
-  nn->w2 -= dw2 * rate;
+  da_get(&nn->bs, 0)->values[0] -= db * rate;
+  da_get(&nn->ws, 0)->values[0] -= dw1 * rate;
+  da_get(&nn->ws, 0)->values[1] -= dw2 * rate;
   return loss;
-}
-
-NN_ neuron_random(f32 floor, f32 ceil) {
-  return (NN_){
-      .w1 = randf_in(floor, ceil),
-      .bias = randf_in(floor, ceil),
-  };
 }
 
 // AND gate.
@@ -235,13 +221,8 @@ f32 training_data[] = {
 };
 
 int main() {
-  usize layers[] = {2, 3, 2};
+  usize layers[] = {2, 1};
   NN nn = nn_new(layers, ARR_LEN(layers));
-
-  // Manually setting the weights and biases so it forms a NAND gate.
-  // da_get(&nn.ws, 0)->values[0] = -667;
-  // da_get(&nn.ws, 0)->values[1] = -667;
-  // da_get(&nn.bs, 0)->values[0] = 1000;
 
   // Print matrices in the network.
   for (usize i = 0; i < ARR_LEN(layers) - 1; ++i) {
@@ -254,6 +235,11 @@ int main() {
     mat_println(*da_get(&nn.as, i));
   }
 
+  usize training_rounds = 100 * 1000;
+  for (usize i = 0; i < training_rounds; ++i) {
+    nn_train(&nn, training_data, ARR_LEN(training_data), 1, i);
+  }
+
   for (usize i = 0; i < ARR_LEN(training_data); i += 3) {
     SliceF32 out = nn_forward(nn, (SliceF32){&training_data[i], 2});
     printf("%.0f, %.0f => %.04f ~ %.0f\n", training_data[i], training_data[i + 1], out.values[0],
@@ -262,25 +248,5 @@ int main() {
 
   nn_free(nn);
 
-  // srand(time(NULL));
-  // NN_ nn = neuron_random(-1, 1);
-  // DBG_PRINTLN(nn.w1);
-  // DBG_PRINTLN(nn.w2);
-  // DBG_PRINTLN(nn.bias);
-  // usize training_rounds = 100 * 1000;
-  // for (usize i = 0; i < training_rounds; ++i) {
-  //   train(&nn, training_data, ARR_LEN(training_data), i, 1);
-  // }
-  // printf("-------------------------\n");
-  // DBG_PRINTLN(nn.w1);
-  // DBG_PRINTLN(nn.w2);
-  // DBG_PRINTLN(nn.bias);
-  // for (usize i = 0; i < ARR_LEN(training_data); i += 3) {
-  //   f32 x1 = training_data[i];
-  //   f32 x2 = training_data[i + 1];
-  //   f32 out = forward(nn, x1, x2);
-  //   printf("%.0f, %.0f => %.04f ~ %.0f\n", x1, x2, out, roundf(out));
-  // }
-
-  // return 0;
+  return 0;
 }
