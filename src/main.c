@@ -3,11 +3,7 @@
 #include "da.h"
 
 DECL_DA_STRUCT(f32, DynArrayF32);
-
-typedef struct SliceF32 {
-  f32 *values;
-  usize len;
-} SliceF32;
+DECL_SLICE_STRUCT(f32, SliceF32);
 
 f32 randf_0to1() {
   return (f32)rand() / (f32)RAND_MAX;
@@ -32,6 +28,15 @@ typedef struct Mat {
   usize rows;
 } Mat;
 
+/// Tensor is a cringe name,
+/// I'm gonna call it Mat, short for Mattress.
+/// Does not own the data.
+typedef struct ConstMat {
+  const f32 *values;
+  usize cols;
+  usize rows;
+} ConstMat;
+
 /// Perform sigmoid on every element of a matrix.
 void sigmoid_mat(Mat m) {
   for (usize i = 0; i < m.rows * m.cols; ++i) {
@@ -46,8 +51,16 @@ f32 *mat_get(Mat m, usize x, usize y) {
   return &m.values[y * m.cols + x];
 }
 
+const f32 *mat_get_(ConstMat m, usize x, usize y) {
+  return &m.values[y * m.cols + x];
+}
+
+attribute(const, always_inline) ConstMat mat_as_const(Mat m) {
+  return PTR_CAST(ConstMat, m);
+}
+
 /// SAFETY: Data of dest must not overlap with either of lhs or rhs.
-void mat_mul(Mat dest, Mat lhs, Mat rhs) {
+void mat_mul(Mat dest, ConstMat lhs, ConstMat rhs) {
   // (4x3) * (3x4)
   DEBUG_ASSERT(lhs.cols == rhs.rows);
   DEBUG_ASSERT(dest.rows == lhs.rows);
@@ -57,18 +70,18 @@ void mat_mul(Mat dest, Mat lhs, Mat rhs) {
       f32 *dest_val = mat_get(dest, x, y);
       *dest_val = 0;
       for (usize i = 0; i < lhs.cols; ++i) {
-        *dest_val += *mat_get(lhs, i, y) * *mat_get(rhs, x, i);
+        *dest_val += *mat_get_(lhs, i, y) * *mat_get_(rhs, x, i);
       }
     }
   }
 }
 
-void mat_add(Mat dest, Mat rhs) {
+void mat_add(Mat dest, ConstMat rhs) {
   DEBUG_ASSERT(dest.cols == rhs.cols);
   DEBUG_ASSERT(dest.rows == rhs.rows);
   for (usize y = 0; y < dest.rows; ++y) {
     for (usize x = 0; x < dest.cols; ++x) {
-      *mat_get(dest, x, y) += *mat_get(rhs, x, y);
+      *mat_get(dest, x, y) += *mat_get_(rhs, x, y);
     }
   }
 }
@@ -158,70 +171,117 @@ usize nn_layer_count(NN nn) {
   return nn.as.da_len;
 }
 
-SliceF32 nn_forward(NN nn, SliceF32 input) {
-  Mat a0 = {
+/// Number of inputs of a neuron network.
+usize nn_input_count(NN nn) {
+  return da_get(&nn.ws, 0)->cols;
+}
+
+/// Number of neuron in layer in a neural network.
+/// `layer` does not include inputs.
+usize nn_neuron_count_in_layer(NN nn, usize layer) {
+  return da_get(&nn.as, layer)->rows;
+}
+
+/// Number of inputs of a neuron network.
+usize nn_output_count(NN nn) {
+  return nn_neuron_count_in_layer(nn, nn_layer_count(nn) - 1);
+}
+
+/// SAFETY: `input` must be an array of same number of elements as input layer.
+/// Returns reference to the last layer (output layer).
+const f32 *nn_forward(NN nn, const f32 *input) {
+  ConstMat a0 = {
       .cols = 1,
-      .rows = input.len,
-      .values = input.values,
+      .rows = nn_input_count(nn),
+      .values = input,
   };
   for (usize l = 0; l < nn_layer_count(nn); ++l) {
-    Mat a_ = l == 0 ? a0 : *da_get(&nn.as, l - 1); // a previous layer
+    ConstMat a_ = l == 0 ? a0 : mat_as_const(*da_get(&nn.as, l - 1)); // a previous layer
     Mat a = *da_get(&nn.as, l);
-    Mat w = *da_get(&nn.ws, l);
-    Mat b = *da_get(&nn.bs, l);
+    ConstMat w = mat_as_const(*da_get(&nn.ws, l));
+    ConstMat b = mat_as_const(*da_get(&nn.bs, l));
     mat_mul(a, w, a_);
     mat_add(a, b);
     sigmoid_mat(a);
   }
   Mat out = *da_get(&nn.as, nn.as.da_len - 1);
-  return (SliceF32){out.values, out.cols};
+  return out.values;
 }
 
+void da_free_f32(DynArrayF32 *da) {
+  da_free(*da);
+}
+
+/// `i` is the current round of training.
+/// It's only used for debug logging, leave zero if not needed.
 f32 nn_train(NN *nn, f32 *training_input, usize training_input_size, f32 rate, usize i) {
-  if (nn->as.da_len != 1)
-    TODO();
-  if (da_get(&nn->as, 0)->rows != 1)
-    TODO();
-  if (da_get(&nn->ws, 0)->cols != 2)
-    TODO();
-  assert(training_input_size % 2 == 0);
+  (void)rate;
+  // Only handles 1 neuron per layer rn.
+  if (nn_input_count(*nn) != 1)
+    PANIC_PRINTF("TODO: more than 1 inputs\n");
+  for (usize l = 0; l < nn_layer_count(*nn); ++l)
+    if (nn_neuron_count_in_layer(*nn, l) != 1)
+      PANIC_PRINTF("TODO: more than 1 neurons per layer\n");
+
+  const usize stride = nn_input_count(*nn) + nn_output_count(*nn);
+  const usize n = training_input_size / stride;
+  const usize m = nn_layer_count(*nn);
+  assert(training_input_size % stride == 0);
+
+  // TODO: In future maybe store this into a `TrainingContext` struct to reduce allocations.
+  f32 *dws = xalloc(f32, m);
+  f32 *dbs = xalloc(f32, m);
+
   f32 loss = 0;
-  f32 dw1 = 0;
-  f32 dw2 = 0;
-  f32 db = 0;
-  for (usize i = 0; i < training_input_size; i += 3) {
-    f32 *in = &training_input[i];
-    const f32 y = training_input[i + 2];
-    f32 nn_out = nn_forward(*nn, (SliceF32){in, 2}).values[0];
-    f32 diff = nn_out - y;
+  f32 prod = 1;
+  for (usize i = 0; i < training_input_size; i += stride) {
+    f32 *a0 = &training_input[i];
+    f32 *y = &training_input[i + nn_output_count(*nn)];
+    f32 am = *nn_forward(*nn, a0);
+    f32 diff = am - *y;
     loss += diff * diff;
-    dw1 += diff * nn_out * (1 - nn_out) * in[0];
-    dw2 += diff * nn_out * (1 - nn_out) * in[1];
-    db += diff * nn_out * (1 - nn_out);
+
+    DBG_PRINTLN(am);
+    for (usize j = m - 1; j != SIZE_MAX; --j) {
+      DBG_PRINTLN(j);
+      if (j != m - 1) {
+        f32 a_j = da_get(&nn->as, j)->values[j];
+        f32 w_j = da_get(&nn->ws, j)->values[j];
+        f32 daa = a_j * (1 - a_j) * w_j;
+        prod *= daa;
+      }
+      f32 daL = 2 / (f32)n * diff * prod;
+      f32 a_j = da_get(&nn->as, j)->values[0];
+      f32 a_prev = j > 0 ? da_get(&nn->as, j - 1)->values[0] : *a0;
+      dws[j] += daL * a_j * (1 - a_j) * a_prev;
+      dbs[j] += daL * a_j * (1 - a_j);
+    }
   }
-  usize n = training_input_size / 3;
-  loss = loss / n;
-  dw1 = dw1 / n * 2;
-  dw2 = dw2 / n * 2;
-  db = db / n * 2;
-  if ((i % 1000) == 0)
-    printf("%zu\tloss: %.08f\n", i, loss);
-  da_get(&nn->bs, 0)->values[0] -= db * rate;
-  da_get(&nn->ws, 0)->values[0] -= dw1 * rate;
-  da_get(&nn->ws, 0)->values[1] -= dw2 * rate;
+  printf("%zu", i);
+  for (usize k = 0; k < m; ++k) {
+    dws[k] /= n;
+    dbs[k] /= n;
+    printf("\tdw%zu=%.4f\tdb%zu=%.4f\n", k + 1, dws[k], k + 1, dbs[k]);
+    da_get(&nn->ws, k)->values[0] -= dws[k];
+    da_get(&nn->bs, k)->values[0] -= dbs[k];
+  }
+  loss /= n;
+  printf("loss: %.08f\n", loss);
+
+  xfree(dws);
+  xfree(dbs);
+
   return loss;
 }
 
 // AND gate.
 f32 training_data[] = {
-    0, 0, 1, //
-    1, 0, 1, //
-    0, 1, 1, //
-    1, 1, 0, //
+    1, 0, //
+    0, 1, //
 };
 
 int main() {
-  usize layers[] = {2, 1};
+  usize layers[] = {1, 1};
   NN nn = nn_new(layers, ARR_LEN(layers));
 
   // Print matrices in the network.
@@ -235,15 +295,26 @@ int main() {
     mat_println(*da_get(&nn.as, i));
   }
 
-  usize training_rounds = 100 * 1000;
+  usize training_rounds = 1000;
   for (usize i = 0; i < training_rounds; ++i) {
-    nn_train(&nn, training_data, ARR_LEN(training_data), 1, i);
+    nn_train(&nn, training_data, ARR_LEN(training_data), 1e-2, i);
   }
 
-  for (usize i = 0; i < ARR_LEN(training_data); i += 3) {
-    SliceF32 out = nn_forward(nn, (SliceF32){&training_data[i], 2});
-    printf("%.0f, %.0f => %.04f ~ %.0f\n", training_data[i], training_data[i + 1], out.values[0],
-           roundf(out.values[0]));
+  for (usize i = 0; i < ARR_LEN(training_data); i += nn_input_count(nn) + nn_output_count(nn)) {
+    f32 out = *nn_forward(nn, &training_data[i]);
+    printf("%.0f => %.04f ~ %.0f\n", training_data[i], out, roundf(out));
+  }
+
+  // Print matrices in the network.
+  printf("--------------------------------\n");
+  for (usize i = 0; i < ARR_LEN(layers) - 1; ++i) {
+    DBG_PRINTLN(i);
+    DBG_PRINTF("ws = \n");
+    mat_println(*da_get(&nn.ws, i));
+    DBG_PRINTF("bs = \n");
+    mat_println(*da_get(&nn.bs, i));
+    DBG_PRINTF("as = \n");
+    mat_println(*da_get(&nn.as, i));
   }
 
   nn_free(nn);
